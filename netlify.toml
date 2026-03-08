@@ -1,10 +1,10 @@
-[build]
-  publish = "."
-  command = "npm run build"
+# Remove or comment out the build command
+# command = "npm run build"
 
-[build.environment]
-  NODE_VERSION = "18"
+# Just specify the publish directory
+publish = "/"
 
+# Keep your redirects
 [[redirects]]
   from = "/*"
   to = "/index.html"

@@ -1,15 +1,16 @@
 {
-  "name": "mathmaster",
-  "version": "1.0.0",
-  "description": "Online mathematics exam platform",
-  "main": "index.html",
-  "scripts": {
-    "build": "echo 'No build required'"
-  },
-  "dependencies": {
-    "firebase": "^9.22.0"
-  },
-  "engines": {
-    "node": "18.x"
-  }
+    "name": "mathmaster",
+    "version": "1.0.0",
+    "description": "Online mathematics exam",
+    "main": "index.html",
+    "scripts": {
+        "build": "echo 'No build required'"
+    },
+    "dependencies": {
+        "firebase": "^9.22.0",
+        "razorpay": "^2.9.0"
+    },
+    "engines": {
+        "node": "18.x"
+    }
 }

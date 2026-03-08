@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - MathMaster</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="index.html" class="logo">📘 MathMaster</a>
+            <div class="nav-links">
+                <a href="index.html" class="nav-link">Exams</a>
+                <a href="dashboard.html" class="nav-link active">Dashboard</a>
+                <a href="profile.html" class="nav-link">Profile</a>
+            </div>
+            <div class="user-menu" id="userMenu"></div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div id="globalError" class="alert alert-error hidden"></div>
+        <div id="loadingSpinner" class="text-center mt-8">
+            <div class="loading-spinner"></div>
+        </div>
+
+        <div id="dashboardContent" class="hidden">
+            <h1 class="section-title">📊 Your Dashboard</h1>
+            
+            <!-- Stats Cards -->
+            <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+                <div class="card text-center">
+                    <h3>Exams Purchased</h3>
+                    <p id="purchasedCount" style="font-size: 2.5rem; font-weight: 700;">0</p>
+                </div>
+                <div class="card text-center">
+                    <h3>Quizzes Taken</h3>
+                    <p id="quizzesTaken" style="font-size: 2.5rem; font-weight: 700;">0</p>
+                </div>
+                <div class="card text-center">
+                    <h3>Average Score</h3>
+                    <p id="avgScore" style="font-size: 2.5rem; font-weight: 700;">0%</p>
+                </div>
+                <div class="card text-center">
+                    <h3>Questions Solved</h3>
+                    <p id="questionsSolved" style="font-size: 2.5rem; font-weight: 700;">0</p>
+                </div>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="card mt-8">
+                <h2>🎯 Quick Actions</h2>
+                <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1.5rem;">
+                    <button class="btn btn-primary" onclick="window.location.href='index.html'">
+                        Browse Exams
+                    </button>
+                    <button class="btn btn-secondary" onclick="startRandomTest()">
+                        🎲 Take Random 25-Question Test
+                    </button>
+                </div>
+            </div>
+
+            <!-- Purchased Exams -->
+            <div class="card mt-8">
+                <h2>📚 Your Purchased Exams</h2>
+                <div id="purchasedExamsList" class="grid" style="margin-top: 1.5rem;"></div>
+            </div>
+
+            <!-- Recent Activity -->
+            <div class="card mt-8">
+                <h2>📈 Recent Activity</h2>
+                <div id="recentActivity" style="margin-top: 1.5rem;">
+                    <!-- Activity will be loaded here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/firebase-config.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/auth.js"></script>
+    <script>
+        async function loadDashboard() {
+            try {
+                LoadingState.show();
+                
+                const user = auth.currentUser;
+                if (!user) return;
+                
+                // Get user data
+                const userDoc = await db.collection('users').doc(user.uid).get();
+                const userData = userDoc.data() || {};
+                const purchases = userData.purchasedExams || [];
+                
+                // Get exam details for purchases
+                const purchasedExams = [];
+                for (const examId of purchases) {
+                    const examDoc = await db.collection('exams').doc(examId).get();
+                    if (examDoc.exists) {
+                        purchasedExams.push({ id: examId, ...examDoc.data() });
+                    }
+                }
+                
+                // Get quiz history
+                const historySnap = await db.collection('quizHistory')
+                    .where('userId', '==', user.uid)
+                    .orderBy('timestamp', 'desc')
+                    .limit(10)
+                    .get();
+                
+                const history = historySnap.docs.map(d => d.data());
+                
+                // Calculate stats
+                const quizzesTaken = history.length;
+                const avgScore = history.length > 0 
+                    ? Math.round(history.reduce((sum, q) => sum + (q.score / q.totalQuestions * 100), 0) / history.length)
+                    : 0;
+                const questionsSolved = history.reduce((sum, q) => sum + q.totalQuestions, 0);
+                
+                // Update UI
+                document.getElementById('purchasedCount').textContent = purchases.length;
+                document.getElementById('quizzesTaken').textContent = quizzesTaken;
+                document.getElementById('avgScore').textContent = avgScore + '%';
+                document.getElementById('questionsSolved').textContent = questionsSolved;
+                
+                // Display purchased exams
+                displayPurchasedExams(purchasedExams);
+                
+                // Display recent activity
+                displayRecentActivity(history);
+                
+                document.getElementById('loadingSpinner').classList.add('hidden');
+                document.getElementById('dashboardContent').classList.remove('hidden');
+                
+            } catch (error) {
+                ErrorHandler.handle(error, 'loadDashboard');
+            } finally {
+                LoadingState.hide();
+            }
+        }
+        
+        function displayPurchasedExams(exams) {
+            const container = document.getElementById('purchasedExamsList');
+            
+            if (exams.length === 0) {
+                container.innerHTML = '<p class="text-center" style="color: var(--gray-500);">No exams purchased yet. Browse our exams to get started!</p>';
+                return;
+            }
+            
+            container.innerHTML = '';
+            exams.forEach(exam => {
+                const card = document.createElement('div');
+                card.className = 'card';
+                card.innerHTML = `
+                    <h3>${exam.name}</h3>
+                    <p>${exam.description || ''}</p>
+                    <button class="btn btn-primary" style="width: 100%;" onclick="window.location.href='exam.html?id=${exam.id}'">
+                        Start Practice
+                    </button>
+                `;
+                container.appendChild(card);
+            });
+        }
+        
+        function displayRecentActivity(history) {
+            const container = document.getElementById('recentActivity');
+            
+            if (history.length === 0) {
+                container.innerHTML = '<p style="color: var(--gray-500);">No recent activity. Take a quiz to see your progress!</p>';
+                return;
+            }
+            
+            container.innerHTML = '';
+            history.forEach(quiz => {
+                const percentage = Math.round(quiz.score / quiz.totalQuestions * 100);
+                const date = new Date(quiz.timestamp?.toDate()).toLocaleDateString();
+                
+                const item = document.createElement('div');
+                item.className = 'card';
+                item.style.marginBottom = '1rem';
+                item.innerHTML = `
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <strong>${quiz.examName || 'Quiz'}</strong> - ${quiz.categoryName || ''}
+                            <div style="color: var(--gray-500); font-size: 0.875rem;">${date}</div>
+                        </div>
+                        <div style="text-align: right;">
+                            <span style="font-size: 1.5rem; font-weight: 700; color: ${percentage >= 70 ? 'var(--success)' : (percentage >= 40 ? 'var(--warning)' : 'var(--danger)')}">
+                                ${percentage}%
+                            </span>
+                            <div style="color: var(--gray-500);">${quiz.score}/${quiz.totalQuestions}</div>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(item);
+            });
+        }
+        
+        window.startRandomTest = async () => {
+            try {
+                LoadingState.show();
+                const questions = await getRandomQuestions(25);
+                
+                // Save to session and redirect
+                QuizSession.save({
+                    questions,
+                    mode: 'random',
+                    timePerQuestion: 60,
+                    totalTime: questions.length * 60
+                });
+                
+                window.location.href = 'quiz.html';
+            } catch (error) {
+                ErrorHandler.handle(error, 'startRandomTest');
+            }
+        };
+        
+        document.addEventListener('DOMContentLoaded', loadDashboard);
+    </script>
+</body>
+</html>

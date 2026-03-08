@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quiz - MathMaster</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="index.html" class="logo">📘 MathMaster</a>
+            <div class="nav-links">
+                <a href="index.html" class="nav-link">Exams</a>
+                <a href="dashboard.html" class="nav-link">Dashboard</a>
+                <a href="profile.html" class="nav-link">Profile</a>
+            </div>
+            <div class="user-menu" id="userMenu"></div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div id="globalError" class="alert alert-error hidden"></div>
+        
+        <!-- Timer -->
+        <div class="timer">
+            <span>⏳ Time Remaining</span>
+            <span class="timer-display" id="timerDisplay">00:00</span>
+        </div>
+
+        <!-- Quiz Container -->
+        <div class="quiz-container" id="quizContainer">
+            <!-- Main Content -->
+            <div class="quiz-main">
+                <div class="progress-attempt">
+                    <span id="attemptedCount">0/0 attempted</span>
+                    <span id="progressPercentage">0% complete</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+                </div>
+
+                <div id="questionDisplay"></div>
+
+                <div class="navigation">
+                    <button class="btn btn-outline" id="prevBtn" onclick="prevQuestion()" disabled>← Previous</button>
+                    <button class="btn btn-outline" id="nextBtn" onclick="nextQuestion()">Next →</button>
+                    <button class="btn btn-primary" id="submitBtn" onclick="submitQuiz()" style="display: none;">Submit Quiz</button>
+                </div>
+            </div>
+
+            <!-- Sidebar -->
+            <div class="quiz-sidebar">
+                <h3>📌 Question Palette</h3>
+                <div id="palette" class="palette"></div>
+                
+                <div style="display: flex; gap: 0.5rem; font-size: 0.875rem; margin: 1rem 0; flex-wrap: wrap;">
+                    <span><span style="background: var(--primary); width: 16px; height: 16px; display: inline-block; border-radius: 4px;"></span> Answered</span>
+                    <span><span style="background: #dbeafe; width: 16px; height: 16px; display: inline-block; border-radius: 4px;"></span> Visited</span>
+                    <span><span style="background: var(--gray-200); width: 16px; height: 16px; display: inline-block; border-radius: 4px;"></span> Not Seen</span>
+                </div>
+
+                <hr style="margin: 1rem 0; border-color: var(--gray-200);">
+
+                <div>
+                    <strong id="answeredStat">0 / 0</strong> answered
+                </div>
+                
+                <div style="margin-top: 1rem;">
+                    <strong>⏱️ Time per question:</strong> 1 minute
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/firebase-config.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/auth.js"></script>
+    <script>
+        // Quiz state
+        let questions = [];
+        let currentIndex = 0;
+        let userAnswers = [];
+        let timerInterval = null;
+        let quizSession = null;
+        
+        class QuizManager {
+            constructor() {
+                this.loadSession();
+            }
+            
+            loadSession() {
+                quizSession = QuizSession.load();
+                if (!quizSession) {
+                    window.location.href = 'index.html';
+                    return;
+                }
+                
+                questions = quizSession.questions;
+                currentIndex = 0;
+                userAnswers = new Array(questions.length).fill(null);
+                
+                // Start timer
+                this.startTimer(quizSession.totalTime || questions.length * 60);
+                this.render();
+            }
+            
+            startTimer(seconds) {
+                timerInterval = QuizTimer.start(seconds, 
+                    (remaining) => {
+                        document.getElementById('timerDisplay').textContent = QuizTimer.format(remaining);
+                        
+                        // Warning when 5 minutes left
+                        if (remaining === 300) {
+                            this.showWarning('5 minutes remaining!');
+                        }
+                    },
+                    () => {
+                        this.submitQuiz();
+                    }
+                );
+            }
+            
+            render() {
+                this.renderQuestion();
+                this.renderPalette();
+                this.updateStats();
+                MathJax.typesetPromise?.();
+            }
+            
+            renderQuestion() {
+                const q = questions[currentIndex];
+                const container = document.getElementById('questionDisplay');
+                
+                container.innerHTML = `
+                    <div class="question-item">
+                        <div style="font-size: 1.25rem; font-weight: 600; margin-bottom: 1.5rem;">
+                            Question ${currentIndex + 1} of ${questions.length}
+                        </div>
+                        <div style="font-size: 1.2rem; margin-bottom: 2rem;">
+                            ${q.text}
+                        </div>
+                        <ul class="options-list">
+                            ${q.options.map((opt, i) => `
+                                <li class="option-item ${userAnswers[currentIndex] === i ? 'selected' : ''}" 
+                                    onclick="selectOption(${i})">
+                                    ${opt}
+                                </li>
+                            `).join('')}
+                        </ul>
+                    </div>
+                `;
+                
+                // Update navigation buttons
+                document.getElementById('prevBtn').disabled = currentIndex === 0;
+                const isLast = currentIndex === questions.length - 1;
+                document.getElementById('submitBtn').style.display = isLast ? 'inline-flex' : 'none';
+                document.getElementById('nextBtn').style.display = isLast ? 'none' : 'inline-flex';
+                
+                // Update progress
+                const progress = ((currentIndex + 1) / questions.length) * 100;
+                document.getElementById('progressFill').style.width = progress + '%';
+                document.getElementById('progressPercentage').textContent = Math.round(progress) + '% complete';
+            }
+            
+            renderPalette() {
+                const palette = document.getElementById('palette');
+                let html = '';
+                
+                for (let i = 0; i < questions.length; i++) {
+                    let classes = 'palette-item';
+                    if (i === currentIndex) classes += ' current';
+                    else if (userAnswers[i] !== null) classes += ' answered';
+                    else if (i < currentIndex) classes += ' visited';
+                    
+                    html += `<div class="${classes}" onclick="jumpToQuestion(${i})">${i + 1}</div>`;
+                }
+                
+                palette.innerHTML = html;
+            }
+            
+            updateStats() {
+                const answered = userAnswers.filter(a => a !== null).length;
+                document.getElementById('answeredStat').textContent = `${answered} / ${questions.length}`;
+                document.getElementById('attemptedCount').textContent = `${answered}/${questions.length} attempted`;
+            }
+            
+            selectOption(index) {
+                userAnswers[currentIndex] = index;
+                this.render();
+            }
+            
+            jumpToQuestion(index) {
+                currentIndex = index;
+                this.render();
+            }
+            
+            nextQuestion() {
+                if (currentIndex < questions.length - 1) {
+                    currentIndex++;
+                    this.render();
+                }
+            }
+            
+            prevQuestion() {
+                if (currentIndex > 0) {
+                    currentIndex--;
+                    this.render();
+                }
+            }
+            
+            async submitQuiz() {
+                clearInterval(timerInterval);
+                
+                // Calculate score
+                let score = 0;
+                questions.forEach((q, i) => {
+                    if (userAnswers[i] === q.correct) score++;
+                });
+                
+                // Save results
+                const results = {
+                    questions,
+                    userAnswers,
+                    score,
+                    totalQuestions: questions.length,
+                    timestamp: new Date().toISOString()
+                };
+                
+                // Save to session for results page
+                sessionStorage.setItem('quizResults', JSON.stringify(results));
+                
+                // Save to history (if user is logged in)
+                if (auth.currentUser) {
+                    try {
+                        await db.collection('quizHistory').add({
+                            userId: auth.currentUser.uid,
+                            examId: quizSession.examId || 'random',
+                            categoryId: quizSession.categoryId,
+                            examName: quizSession.examName || 'Random Test',
+                            categoryName: quizSession.categoryName,
+                            score,
+                            totalQuestions: questions.length,
+                            timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                        });
+                    } catch (e) {
+                        console.warn('Failed to save quiz history:', e);
+                    }
+                }
+                
+                // Clear quiz session
+                QuizSession.clear();
+                
+                // Redirect to results
+                window.location.href = 'results.html';
+            }
+            
+            showWarning(message) {
+                const alert = document.createElement('div');
+                alert.className = 'alert alert-warning';
+                alert.textContent = message;
+                document.querySelector('.container').prepend(alert);
+                
+                setTimeout(() => alert.remove(), 5000);
+            }
+        }
+        
+        // Global functions for onclick handlers
+        window.selectOption = (index) => quizManager.selectOption(index);
+        window.jumpToQuestion = (index) => quizManager.jumpToQuestion(index);
+        window.nextQuestion = () => quizManager.nextQuestion();
+        window.prevQuestion = () => quizManager.prevQuestion();
+        window.submitQuiz = () => quizManager.submitQuiz();
+        
+        // Initialize quiz
+        let quizManager;
+        document.addEventListener('DOMContentLoaded', () => {
+            quizManager = new QuizManager();
+        });
+    </script>
+</body>
+</html>

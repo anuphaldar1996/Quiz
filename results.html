@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Results - MathMaster</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="index.html" class="logo">📘 MathMaster</a>
+            <div class="nav-links">
+                <a href="index.html" class="nav-link">Exams</a>
+                <a href="dashboard.html" class="nav-link">Dashboard</a>
+                <a href="profile.html" class="nav-link">Profile</a>
+            </div>
+            <div class="user-menu" id="userMenu"></div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="results">
+            <div class="score-circle">
+                <span class="score-number" id="scoreDisplay">0/0</span>
+                <span>Score</span>
+            </div>
+            
+            <div style="text-align: center; margin-bottom: 2rem;">
+                <h2 id="percentageDisplay">0%</h2>
+                <p id="gradeMessage"></p>
+            </div>
+            
+            <div style="display: flex; gap: 1rem; justify-content: center; margin-bottom: 3rem;">
+                <button class="btn btn-primary" onclick="tryAgain()">Try Again</button>
+                <button class="btn btn-secondary" onclick="window.location.href='dashboard.html'">Go to Dashboard</button>
+                <button class="btn btn-outline" onclick="window.location.href='index.html'">Browse More Exams</button>
+            </div>
+            
+            <h2>📝 Detailed Explanations</h2>
+            <div id="explanations"></div>
+        </div>
+    </div>
+
+    <script src="js/firebase-config.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/auth.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const results = JSON.parse(sessionStorage.getItem('quizResults'));
+            if (!results) {
+                window.location.href = 'index.html';
+                return;
+            }
+            
+            displayResults(results);
+        });
+        
+        function displayResults(results) {
+            const { questions, userAnswers, score, totalQuestions } = results;
+            const percentage = Math.round((score / totalQuestions) * 100);
+            
+            // Display score
+            document.getElementById('scoreDisplay').textContent = `${score}/${totalQuestions}`;
+            document.getElementById('percentageDisplay').textContent = percentage + '%';
+            
+            // Grade message
+            let gradeMessage = '';
+            let gradeColor = '';
+            if (percentage >= 90) {
+                gradeMessage = '🎉 Excellent! Outstanding performance!';
+                gradeColor = 'var(--success)';
+            } else if (percentage >= 70) {
+                gradeMessage = '👍 Good job! Keep practicing to improve further.';
+                gradeColor = 'var(--success)';
+            } else if (percentage >= 50) {
+                gradeMessage = '📚 Fair attempt. More practice will help!';
+                gradeColor = 'var(--warning)';
+            } else {
+                gradeMessage = '💪 Keep learning! Review the explanations and try again.';
+                gradeColor = 'var(--danger)';
+            }
+            
+            document.getElementById('gradeMessage').innerHTML = `<span style="color: ${gradeColor}; font-weight: 600;">${gradeMessage}</span>`;
+            
+            // Display explanations
+            const explanationsDiv = document.getElementById('explanations');
+            explanationsDiv.innerHTML = '';
+            
+            questions.forEach((q, i) => {
+                const userAnswer = userAnswers[i];
+                const isCorrect = userAnswer === q.correct;
+                
+                const card = document.createElement('div');
+                card.className = 'explanation-card';
+                card.innerHTML = `
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                        <h3 style="color: ${isCorrect ? 'var(--success)' : 'var(--danger)'};">
+                            Question ${i + 1}: ${isCorrect ? '✓ Correct' : '✗ Incorrect'}
+                        </h3>
+                        <span style="font-weight: 600;">${isCorrect ? '+' : ''}${isCorrect ? '1' : '0'} point</span>
+                    </div>
+                    
+                    <div style="margin-bottom: 1rem;">
+                        <strong>Question:</strong>
+                        <div style="margin-top: 0.5rem; padding: 1rem; background: var(--gray-50); border-radius: var(--radius-lg);">
+                            ${q.text}
+                        </div>
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                        <div>
+                            <strong>Your Answer:</strong>
+                            <div style="margin-top: 0.5rem; padding: 0.75rem; background: ${userAnswer !== null ? (isCorrect ? '#d1fae5' : '#fee2e2') : '#f3f4f6'}; border-radius: var(--radius-lg);">
+                                ${userAnswer !== null ? q.options[userAnswer] : 'Not answered'}
+                            </div>
+                        </div>
+                        <div>
+                            <strong>Correct Answer:</strong>
+                            <div style="margin-top: 0.5rem; padding: 0.75rem; background: '#d1fae5'; border-radius: var(--radius-lg);">
+                                ${q.options[q.correct]}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    ${q.explanation ? `
+                        <div>
+                            <strong>Explanation:</strong>
+                            <p style="margin-top: 0.5rem; color: var(--gray-600);">${q.explanation}</p>
+                        </div>
+                    ` : ''}
+                `;
+                
+                explanationsDiv.appendChild(card);
+            });
+            
+            // Save to history if not already saved (quiz page already saves)
+        }
+        
+        window.tryAgain = () => {
+            const results = JSON.parse(sessionStorage.getItem('quizResults'));
+            if (results) {
+                // Restore quiz session
+                QuizSession.save({
+                    questions: results.questions,
+                    totalTime: results.questions.length * 60
+                });
+                window.location.href = 'quiz.html';
+            } else {
+                window.location.href = 'index.html';
+            }
+        };
+    </script>
+</body>
+</html>

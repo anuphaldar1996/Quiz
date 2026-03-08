@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Profile - MathMaster</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="index.html" class="logo">📘 MathMaster</a>
+            <div class="nav-links">
+                <a href="index.html" class="nav-link">Exams</a>
+                <a href="dashboard.html" class="nav-link">Dashboard</a>
+                <a href="profile.html" class="nav-link active">Profile</a>
+            </div>
+            <div class="user-menu" id="userMenu"></div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div id="globalError" class="alert alert-error hidden"></div>
+        <div id="loadingSpinner" class="text-center mt-8">
+            <div class="loading-spinner"></div>
+        </div>
+
+        <div id="profileContent" class="hidden">
+            <h1 class="section-title">👤 Your Profile</h1>
+            
+            <div class="grid" style="grid-template-columns: 300px 1fr;">
+                <!-- Profile Card -->
+                <div class="card" style="height: fit-content;">
+                    <div style="text-align: center;">
+                        <div style="width: 100px; height: 100px; background: var(--primary); border-radius: 50%; margin: 0 auto 1rem; display: flex; align-items: center; justify-content: center;">
+                            <span style="font-size: 3rem; color: white;" id="avatarInitial">👤</span>
+                        </div>
+                        <h2 id="profileName"></h2>
+                        <p id="profileEmail" style="color: var(--gray-500);"></p>
+                    </div>
+                    
+                    <hr style="margin: 1.5rem 0;">
+                    
+                    <div>
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 1rem;">
+                            <span>Member since:</span>
+                            <strong id="memberSince"></strong>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 1rem;">
+                            <span>Last login:</span>
+                            <strong id="lastLogin"></strong>
+                        </div>
+                        <div style="display: flex; justify-content: space-between;">
+                            <span>Account status:</span>
+                            <strong style="color: var(--success);">Active</strong>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Settings Card -->
+                <div class="card">
+                    <h2>⚙️ Account Settings</h2>
+                    
+                    <div style="margin-top: 2rem;">
+                        <h3>Change Password</h3>
+                        <form id="changePasswordForm" onsubmit="changePassword(event)">
+                            <div class="form-group">
+                                <label class="form-label">Current Password</label>
+                                <input type="password" class="form-input" id="currentPassword" required>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">New Password</label>
+                                <input type="password" class="form-input" id="newPassword" required 
+                                       minlength="6" pattern=".{6,}" title="Minimum 6 characters">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Confirm New Password</label>
+                                <input type="password" class="form-input" id="confirmPassword" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Update Password</button>
+                        </form>
+                    </div>
+                    
+                    <hr style="margin: 2rem 0;">
+                    
+                    <div>
+                        <h3 style="color: var(--danger);">Danger Zone</h3>
+                        <p style="color: var(--gray-500); margin: 1rem 0;">Permanently delete your account and all associated data. This action cannot be undone.</p>
+                        <button class="btn btn-danger" onclick="showDeleteConfirmation()">Delete Account</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Purchase History -->
+            <div class="card mt-8">
+                <h2>📋 Purchase History</h2>
+                <div id="purchaseHistory" style="margin-top: 1.5rem;">
+                    <!-- Will be populated -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div id="deleteModal" class="modal-overlay" style="display: none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>⚠️ Delete Account</h3>
+                <button class="modal-close" onclick="closeDeleteModal()">&times;</button>
+            </div>
+            <p>Are you absolutely sure? This will permanently delete:</p>
+            <ul style="margin: 1rem 0 1rem 2rem;">
+                <li>Your profile information</li>
+                <li>Purchase history</li>
+                <li>Quiz history and progress</li>
+                <li>All associated data</li>
+            </ul>
+            <p style="color: var(--danger); font-weight: 600;">This action cannot be undone.</p>
+            
+            <form onsubmit="deleteAccount(event)" style="margin-top: 1.5rem;">
+                <div class="form-group">
+                    <label class="form-label">Type "DELETE" to confirm</label>
+                    <input type="text" class="form-input" id="deleteConfirm" pattern="DELETE" required>
+                </div>
+                <div style="display: flex; gap: 1rem;">
+                    <button type="submit" class="btn btn-danger">Permanently Delete</button>
+                    <button type="button" class="btn btn-outline" onclick="closeDeleteModal()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="js/firebase-config.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/auth.js"></script>
+    <script>
+        async function loadProfile() {
+            try {
+                LoadingState.show();
+                
+                const user = auth.currentUser;
+                if (!user) return;
+                
+                // Get user data
+                const userDoc = await db.collection('users').doc(user.uid).get();
+                const userData = userDoc.data() || {};
+                
+                // Update profile info
+                document.getElementById('profileName').textContent = user.displayName || user.email.split('@')[0];
+                document.getElementById('profileEmail').textContent = user.email;
+                document.getElementById('avatarInitial').textContent = user.email[0].toUpperCase();
+                
+                const memberSince = userData.createdAt?.toDate() || new Date(user.metadata.creationTime);
+                document.getElementById('memberSince').textContent = memberSince.toLocaleDateString();
+                
+                const lastLogin = userData.lastLogin?.toDate() || new Date(user.metadata.lastSignInTime);
+                document.getElementById('lastLogin').textContent = lastLogin.toLocaleDateString();
+                
+                // Load purchase history
+                await loadPurchaseHistory(user.uid);
+                
+                document.getElementById('loadingSpinner').classList.add('hidden');
+                document.getElementById('profileContent').classList.remove('hidden');
+                
+            } catch (error) {
+                ErrorHandler.handle(error, 'loadProfile');
+            } finally {
+                LoadingState.hide();
+            }
+        }
+        
+        async function loadPurchaseHistory(userId) {
+            try {
+                // Get purchases from subcollection
+                const purchasesSnap = await db.collection('users').doc(userId)
+                    .collection('purchases')
+                    .orderBy('timestamp', 'desc')
+                    .get();
+                
+                const container = document.getElementById('purchaseHistory');
+                
+                if (purchasesSnap.empty) {
+                    container.innerHTML = '<p style="color: var(--gray-500);">No purchase history yet.</p>';
+                    return;
+                }
+                
+                container.innerHTML = '';
+                for (const doc of purchasesSnap.docs) {
+                    const purchase = doc.data();
+                    
+                    // Get exam details
+                    const examDoc = await db.collection('exams').doc(purchase.examId).get();
+                    const exam = examDoc.data();
+                    
+                    const item = document.createElement('div');
+                    item.className = 'card';
+                    item.style.marginBottom = '1rem';
+                    item.innerHTML = `
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <strong>${exam?.name || 'Unknown Exam'}</strong>
+                                <div style="color: var(--gray-500); font-size: 0.875rem;">
+                                    ${purchase.timestamp?.toDate().toLocaleString()}
+                                </div>
+                            </div>
+                            <div style="font-weight: 600; color: var(--success);">
+                                ${formatCurrency(purchase.amount)}
+                            </div>
+                        </div>
+                    `;
+                    container.appendChild(item);
+                }
+            } catch (error) {
+                console.error('Error loading purchase history:', error);
+                document.getElementById('purchaseHistory').innerHTML = '<p style="color: var(--danger);">Failed to load purchase history.</p>';
+            }
+        }
+        
+        window.changePassword = async (e) => {
+            e.preventDefault();
+            
+            const currentPassword = document.getElementById('currentPassword').value;
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            
+            if (newPassword !== confirmPassword) {
+                alert('New passwords do not match');
+                return;
+            }
+            
+            try {
+                const user = auth.currentUser;
+                const credential = firebase.auth.EmailAuthProvider.credential(
+                    user.email,
+                    currentPassword
+                );
+                
+                await user.reauthenticateWithCredential(credential);
+                await user.updatePassword(newPassword);
+                
+                alert('Password updated successfully!');
+                e.target.reset();
+            } catch (error) {
+                alert(error.message);
+            }
+        };
+        
+        window.showDeleteConfirmation = () => {
+            document.getElementById('deleteModal').style.display = 'flex';
+        };
+        
+        window.closeDeleteModal = () => {
+            document.getElementById('deleteModal').style.display = 'none';
+            document.getElementById('deleteConfirm').value = '';
+        };
+        
+        window.deleteAccount = async (e) => {
+            e.preventDefault();
+            
+            try {
+                LoadingState.show();
+                
+                const user = auth.currentUser;
+                
+                // Delete user data from Firestore
+                await db.collection('users').doc(user.uid).delete();
+                
+                // Delete user's purchases subcollection
+                const purchases = await db.collection('users').doc(user.uid)
+                    .collection('purchases').get();
+                
+                for (const doc of purchases.docs) {
+                    await doc.ref.delete();
+                }
+                
+                // Delete quiz history
+                const history = await db.collection('quizHistory')
+                    .where('userId', '==', user.uid)
+                    .get();
+                
+                for (const doc of history.docs) {
+                    await doc.ref.delete();
+                }
+                
+                // Delete the user account
+                await user.delete();
+                
+                // Redirect to home
+                window.location.href = 'index.html';
+                
+            } catch (error) {
+                ErrorHandler.handle(error, 'deleteAccount');
+                closeDeleteModal();
+            } finally {
+                LoadingState.hide();
+            }
+        };
+        
+        document.addEventListener('DOMContentLoaded', loadProfile);
+    </script>
+</body>
+</html>

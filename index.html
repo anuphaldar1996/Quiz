@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MathMaster - Free Math Practice & Premium Exams</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="index.html" class="logo">📘 MathMaster</a>
+            <div class="nav-links">
+                <a href="index.html" class="nav-link active">Exams</a>
+                <a href="dashboard.html" class="nav-link">Dashboard</a>
+                <a href="profile.html" class="nav-link">Profile</a>
+            </div>
+            <div class="user-menu" id="userMenu">
+                <div class="loading-spinner" style="width: 1.5rem; height: 1.5rem;"></div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="container">
+        <!-- Error Alert -->
+        <div id="globalError" class="alert alert-error hidden"></div>
+        
+        <!-- Loading Spinner -->
+        <div id="loadingSpinner" class="text-center mt-8">
+            <div class="loading-spinner"></div>
+            <p class="mt-4">Loading exams...</p>
+        </div>
+
+        <!-- Exams Grid -->
+        <div id="examsContainer" class="hidden">
+            <h1 class="section-title">📋 Mathematics Exams</h1>
+            <p class="section-desc">Free topics available for everyone. Premium exams require purchase.</p>
+            
+            <div id="examsGrid" class="grid"></div>
+        </div>
+    </div>
+
+    <!-- Purchase Modal -->
+    <div id="purchaseModal" class="modal-overlay" style="display: none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>💳 Purchase Exam</h3>
+                <button class="modal-close" onclick="closePurchaseModal()">&times;</button>
+            </div>
+            <div style="text-align: center;">
+                <p id="purchaseExamName" style="font-size: 1.3rem; font-weight: 600; margin: 1rem 0;"></p>
+                <p>Price: <strong id="purchaseExamPrice"></strong></p>
+                <div id="paymentStatus" style="margin: 1rem 0;"></div>
+                <button class="btn btn-primary" id="payWithRazorpayBtn" onclick="startRazorpayPayment()" style="width: 100%;">Pay with Razorpay</button>
+                <button class="btn btn-outline" onclick="closePurchaseModal()" style="width: 100%; margin-top: 0.5rem;">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let currentUser = null;
+        let currentPurchaseExam = null;
+        let pendingPurchaseId = null;
+
+        // Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyDJ48tFQgIWlNXP7xwJ3kYkZvSSMhWAOpI",
+            authDomain: "cv-maker-36bb8.firebaseapp.com",
+            projectId: "cv-maker-36bb8",
+            storageBucket: "cv-maker-36bb8.firebasestorage.app",
+            messagingSenderId: "253428490647",
+            appId: "1:253428490647:web:3f08b518ee970aeb79a4d2"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const RAZORPAY_KEY_ID = 'rzp_live_SOBBG3HPBRTg2m';
+
+        // Utility functions
+        const LoadingState = {
+            show: (id = 'loadingSpinner') => {
+                const el = document.getElementById(id);
+                if (el) el.classList.remove('hidden');
+            },
+            hide: (id = 'loadingSpinner') => {
+                const el = document.getElementById(id);
+                if (el) el.classList.add('hidden');
+            }
+        };
+
+        const ErrorHandler = {
+            handle: (error, context) => {
+                console.error(`Error in ${context}:`, error);
+                const errorDiv = document.getElementById('globalError');
+                if (errorDiv) {
+                    errorDiv.textContent = error.message || 'An unexpected error occurred';
+                    errorDiv.classList.remove('hidden');
+                    setTimeout(() => errorDiv.classList.add('hidden'), 5000);
+                }
+            }
+        };
+
+        const formatCurrency = (amount) => {
+            return new Intl.NumberFormat('en-IN', {
+                style: 'currency',
+                currency: 'INR',
+                minimumFractionDigits: 0,
+                maximumFractionDigits: 2
+            }).format(amount);
+        };
+
+        // Auth state observer
+        auth.onAuthStateChanged(async (user) => {
+            currentUser = user;
+            updateUserMenu();
+            
+            if (user) {
+                // Check if there's a pending purchase
+                if (pendingPurchaseId) {
+                    showPurchaseModal(pendingPurchaseId);
+                    pendingPurchaseId = null;
+                }
+            }
+            
+            // Load exams regardless of auth state
+            loadExams();
+        });
+
+        function updateUserMenu() {
+            const menu = document.getElementById('userMenu');
+            if (currentUser) {
+                menu.innerHTML = `
+                    <span class="user-email">${currentUser.email}</span>
+                    <button class="btn btn-outline" onclick="logout()">Logout</button>
+                `;
+            } else {
+                menu.innerHTML = `<a href="auth.html" class="btn btn-primary">Login / Sign up</a>`;
+            }
+        }
+
+        window.logout = async () => {
+            try {
+                await auth.signOut();
+                window.location.reload();
+            } catch (error) {
+                ErrorHandler.handle(error, 'logout');
+            }
+        };
+
+        // Load exams
+        async function loadExams() {
+            try {
+                LoadingState.show();
+                
+                const snapshot = await db.collection('exams').get();
+                const exams = snapshot.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data(),
+                    price: doc.data().price || 0
+                }));
+                
+                // Get user purchases if logged in
+                let purchases = [];
+                if (currentUser) {
+                    const userDoc = await db.collection('users').doc(currentUser.uid).get();
+                    purchases = userDoc.exists ? (userDoc.data().purchasedExams || []) : [];
+                }
+                
+                displayExams(exams, purchases);
+                
+                LoadingState.hide();
+                document.getElementById('examsContainer').classList.remove('hidden');
+            } catch (error) {
+                ErrorHandler.handle(error, 'loadExams');
+                // Load demo exams if Firestore fails
+                loadDemoExams();
+            }
+        }
+
+        function loadDemoExams() {
+            const exams = [
+                { id: 'igcse', name: 'IGCSE Mathematics', description: 'Algebra, geometry, statistics (Free)', price: 0 },
+                { id: 'a-level', name: 'A-Level Pure Mathematics', description: 'Calculus, trigonometry, vectors (Premium)', price: 29.99 },
+                { id: 'gmat', name: 'GMAT Quantitative', description: 'Problem solving, data sufficiency', price: 49.99 },
+                { id: 'sat', name: 'SAT Math', description: 'Heart of Algebra, Problem Solving', price: 39.99 }
+            ];
+            displayExams(exams, []);
+            LoadingState.hide();
+            document.getElementById('examsContainer').classList.remove('hidden');
+        }
+
+        function displayExams(exams, purchases) {
+            const grid = document.getElementById('examsGrid');
+            grid.innerHTML = '';
+            
+            exams.forEach(exam => {
+                const isFree = exam.price === 0;
+                const isPurchased = purchases.includes(exam.id);
+                const canAccess = isFree || isPurchased;
+                
+                const card = document.createElement('div');
+                card.className = 'card';
+                card.innerHTML = `
+                    <div class="price-tag ${isFree ? 'free' : ''}">
+                        💰 ${isFree ? 'Free' : formatCurrency(exam.price)}
+                    </div>
+                    <h3>${exam.name}</h3>
+                    <p>${exam.description || 'Practice your skills with topic-wise questions.'}</p>
+                    <div class="action-area">
+                        <span class="${isFree ? 'free-badge' : (isPurchased ? 'purchased-badge' : 'premium-badge')}">
+                            ${isFree ? '✨ Free Access' : (isPurchased ? '✔ Purchased' : '🔒 Premium')}
+                        </span>
+                        ${canAccess ? 
+                            `<button class="btn btn-primary" onclick="enterExam('${exam.id}')">Enter Exam</button>` :
+                            (currentUser ? 
+                                `<button class="btn btn-secondary" onclick="showPurchaseModal('${exam.id}')">Purchase</button>` :
+                                `<a href="auth.html?redirect=index.html" class="btn btn-secondary">Login to Buy</a>`)
+                        }
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        // Enter exam
+        window.enterExam = async (examId) => {
+            try {
+                LoadingState.show();
+                
+                // Check access if user is logged in
+                if (currentUser) {
+                    const exam = await db.collection('exams').doc(examId).get();
+                    if (!exam.exists) {
+                        throw new Error('Exam not found');
+                    }
+                    
+                    // If premium, verify purchase
+                    if (exam.data().price > 0) {
+                        const userDoc = await db.collection('users').doc(currentUser.uid).get();
+                        const purchases = userDoc.exists ? (userDoc.data().purchasedExams || []) : [];
+                        
+                        if (!purchases.includes(examId)) {
+                            showPurchaseModal(examId);
+                            LoadingState.hide();
+                            return;
+                        }
+                    }
+                }
+                
+                // Store exam ID and redirect to exam page
+                sessionStorage.setItem('currentExamId', examId);
+                window.location.href = `exam.html?id=${examId}`;
+                
+            } catch (error) {
+                ErrorHandler.handle(error, 'enterExam');
+                LoadingState.hide();
+            }
+        };
+
+        // Purchase modal functions
+        window.showPurchaseModal = (examId) => {
+            if (!currentUser) {
+                pendingPurchaseId = examId;
+                window.location.href = 'auth.html?redirect=index.html';
+                return;
+            }
+            
+            db.collection('exams').doc(examId).get().then(doc => {
+                if (doc.exists) {
+                    currentPurchaseExam = { id: doc.id, ...doc.data() };
+                    document.getElementById('purchaseExamName').textContent = doc.data().name;
+                    document.getElementById('purchaseExamPrice').textContent = formatCurrency(doc.data().price);
+                    document.getElementById('purchaseModal').style.display = 'flex';
+                    document.getElementById('paymentStatus').innerHTML = '';
+                }
+            }).catch(error => {
+                ErrorHandler.handle(error, 'showPurchaseModal');
+            });
+        };
+
+        window.closePurchaseModal = () => {
+            document.getElementById('purchaseModal').style.display = 'none';
+            currentPurchaseExam = null;
+        };
+
+        // Razorpay payment
+        window.startRazorpayPayment = async () => {
+            if (!currentPurchaseExam || !currentUser) return;
+            
+            const exam = currentPurchaseExam;
+            const amount = Math.round(exam.price * 100); // Convert to paise
+            const btn = document.getElementById('payWithRazorpayBtn');
+            const statusDiv = document.getElementById('paymentStatus');
+            
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading-spinner" style="width: 1.2rem; height: 1.2rem;"></span> Processing...';
+            statusDiv.innerHTML = '';
+
+            try {
+                // In production, this should call your Netlify function
+                // For demo, we'll simulate a successful payment
+                
+                // Simulate payment success
+                setTimeout(async () => {
+                    try {
+                        // Add purchase to user record
+                        await db.collection('users').doc(currentUser.uid).update({
+                            purchasedExams: firebase.firestore.FieldValue.arrayUnion(exam.id)
+                        });
+                        
+                        // Add to purchases subcollection
+                        await db.collection('users').doc(currentUser.uid)
+                            .collection('purchases').add({
+                                examId: exam.id,
+                                amount: exam.price,
+                                timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                            });
+                        
+                        statusDiv.innerHTML = '<div class="alert alert-success">✅ Payment successful! Access granted.</div>';
+                        
+                        setTimeout(() => {
+                            closePurchaseModal();
+                            window.location.reload(); // Refresh to show updated access
+                        }, 1500);
+                        
+                    } catch (error) {
+                        statusDiv.innerHTML = '<div class="alert alert-error">❌ Error saving purchase. Please contact support.</div>';
+                        btn.disabled = false;
+                        btn.innerHTML = 'Pay with Razorpay';
+                    }
+                }, 2000);
+
+                /* 
+                // Actual Razorpay implementation (commented for demo)
+                const response = await fetch('/.netlify/functions/create-order', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + await currentUser.getIdToken()
+                    },
+                    body: JSON.stringify({
+                        amount: amount,
+                        currency: 'INR',
+                        receipt: exam.id
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to create order');
+                }
+
+                const order = await response.json();
+
+                const options = {
+                    key: RAZORPAY_KEY_ID,
+                    amount: order.amount,
+                    currency: order.currency,
+                    name: 'MathMaster',
+                    description: `Purchase: ${exam.name}`,
+                    order_id: order.id,
+                    handler: async function(response) {
+                        // Verify payment and add purchase
+                        await db.collection('users').doc(currentUser.uid).update({
+                            purchasedExams: firebase.firestore.FieldValue.arrayUnion(exam.id)
+                        });
+                        
+                        statusDiv.innerHTML = '<div class="alert alert-success">✅ Payment successful! Access granted.</div>';
+                        
+                        setTimeout(() => {
+                            closePurchaseModal();
+                            window.location.reload();
+                        }, 1500);
+                    },
+                    prefill: {
+                        email: currentUser.email
+                    },
+                    theme: {
+                        color: '#1e4982'
+                    },
+                    modal: {
+                        ondismiss: function() {
+                            btn.disabled = false;
+                            btn.innerHTML = 'Pay with Razorpay';
+                        }
+                    }
+                };
+
+                const rzp = new Razorpay(options);
+                rzp.open();
+                */
+                
+            } catch (error) {
+                console.error('Payment error:', error);
+                statusDiv.innerHTML = '<div class="alert alert-error">❌ Failed to process payment. Please try again.</div>';
+                btn.disabled = false;
+                btn.innerHTML = 'Pay with Razorpay';
+            }
+        };
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            // Check if there's a pending purchase from URL params
+            const urlParams = new URLSearchParams(window.location.search);
+            const pendingExam = urlParams.get('purchase');
+            if (pendingExam && currentUser) {
+                showPurchaseModal(pendingExam);
+            }
+        });
+    </script>
+</body>
+</html>
